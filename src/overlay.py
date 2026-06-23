@@ -104,6 +104,7 @@ class OverlayWindow(QWidget):
                 return
             self._result = rect
             log.info("Overlay confirmed: %s", rect)
+            self.hide()
             self.close()
         else:
             super().keyPressEvent(event)
