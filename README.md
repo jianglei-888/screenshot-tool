@@ -4,7 +4,7 @@
 
 ## 状态
 
-**当前进度**：T01-T06 已完成（6 / 18 = 33%），阶段 2（核心能力）全部完成，正在进入阶段 3（UI 层）。
+**当前进度**：T01-T07 已完成（7 / 18 = 39%），阶段 3（UI 层）进行中（1/5）。
 
 | 已完成 | 模块 | 状态 |
 |--------|------|------|
@@ -13,15 +13,19 @@
 | T04 | `src/selection.py` | ✅ 矩形规范化（纯函数） |
 | T05 | `src/clipboard.py` | ✅ 剪贴板写入 |
 | T06 | `src/saver.py` | ✅ 自动保存到默认目录 |
+| T07 | `src/overlay.py` | ✅ 全屏半透明遮罩（仅 ESC 关闭） |
 
-**注意**：目前 `python -m src.main` 还不能跑（main / overlay / hotkey 待开发，T07-T13）。已完成的模块各自有手动验证脚本可单独跑通。
+**注意**：目前 `python -m src.main` 还不能跑（main / hotkey 待开发，T12-T13）。已完成的模块各自有手动验证脚本可单独跑通。
+
+**T07 当前能力**：可以创建覆盖虚拟屏的半透明遮罩窗口，按 ESC 关闭；尚未支持鼠标选区、确认/取消、截图调用。
 
 完整架构与开发计划见 [docs/architecture.md](docs/architecture.md)。
 
 ## 功能范围（MVP）
 
-- 全局快捷键启动截图模式（T07-T13 待实现）
-- 鼠标拖拽选择截图区域（T07-T10 待实现）
+- 全局快捷键启动截图模式（T12-T13 待实现）
+- 鼠标拖拽选择截图区域（T08-T10 待实现）
+- 全屏半透明遮罩 + ESC 关闭（✅ T07 骨架）
 - 自动复制到系统剪贴板（✅ T05）
 - **自动保存**为 PNG 到 `~/Pictures/Screenshots`（✅ T06，无保存对话框）
 
@@ -62,6 +66,7 @@ python -m venv .venv
 .venv/Scripts/python.exe scripts/verify_capture.py      # 截全屏 + 区域
 .venv/Scripts/python.exe scripts/verify_clipboard.py    # 写剪贴板（需手动开 Paint 粘贴确认）
 .venv/Scripts/python.exe scripts/verify_saver.py        # 5 项断言
+.venv/Scripts/python.exe scripts/verify_overlay.py      # 弹全屏遮罩，按 ESC 关闭
 
 # 3. 跑 pytest 单测
 .venv/Scripts/python.exe -m pytest tests/ -v
@@ -86,15 +91,16 @@ screenshot-tool/
 │   ├── selection.py                ✅ T04  矩形规范化
 │   ├── clipboard.py                ✅ T05  剪贴板写入
 │   ├── saver.py                    ✅ T06  文件保存
+│   ├── overlay.py                  ✅ T07  全屏遮罩窗口（仅 ESC 关闭）
 │   ├── main.py                     ⏳      应用入口（T13）
-│   ├── hotkey.py                   ⏳      全局热键（T12）
-│   └── overlay.py                  ⏳      全屏遮罩窗口（T07-T11）
+│   └── hotkey.py                   ⏳      全局热键（T12）
 ├── tests/
 │   └── test_selection.py           ✅ T04  pytest 单测（10 个用例）
 └── scripts/
     ├── verify_capture.py           ✅ T03  手动验证脚本
     ├── verify_clipboard.py         ✅ T05  手动验证脚本
     ├── verify_saver.py             ✅ T06  手动验证脚本（5 项断言）
+    ├── verify_overlay.py           ✅ T07  手动验证脚本（人工按 ESC）
     └── build.spec                  ⏳ T16  PyInstaller 配置
 ```
 

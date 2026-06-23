@@ -1,14 +1,12 @@
 # Windows 截图工具 MVP 架构设计
 
-> 版本：v1.2
+> 版本：v1.3
 > 日期：2026-06-23
-> 状态：T01-T06 已完成，T07-T18 待开发
+> 状态：T01-T07 已完成，T08-T18 待开发
 > 变更：
-> - T06 完成：saver.py 实现（自动保存到默认目录，无保存对话框）
-> - saver.py 职责调整：MVP 阶段去掉原生保存对话框（"Save As" 不在范围内）
-> - saver 验证脚本迁至 `scripts/verify_saver.py`（5 项断言）
-> - 阶段 2（核心能力）全部完成，阶段 3（UI 层）开始
-> - T11 依赖更新：T10, T05, T06（saver 集成进端到端流程）
+> - T07 完成：overlay.py 骨架（全屏半透明遮罩窗口 + ESC 关闭）
+> - 阶段 3（UI 层）开始：1/5 完成（T07）
+> - §3.4 overlay.py 从 ⏳ 改为 ✅ T07，描述与实现对齐（只 1 个类、只 1 个 paintEvent、只处理 ESC）
 
 ---
 
@@ -61,7 +59,7 @@ screenshot-tool/
 │   ├── clipboard.py                ✅ T05  剪贴板写入（QClipboard）
 │   ├── main.py                     ⏳      应用入口 + DEFAULT_HOTKEY 常量
 │   ├── hotkey.py                   ⏳      全局热键注册/注销
-│   ├── overlay.py                  ⏳      全屏遮罩窗口（PySide6）
+│   ├── overlay.py                  ✅ T07  全屏遮罩窗口（仅 ESC 退出）
 │   └── saver.py                    ✅ T06  文件保存 + DEFAULT_SAVE_DIR 常量
 ├── tests/
 │   ├── __init__.py
@@ -70,6 +68,7 @@ screenshot-tool/
     ├── verify_capture.py           ✅ T03  手动验证脚本（mss 截全屏+区域）
     ├── verify_clipboard.py         ✅ T05  手动验证脚本（剪贴板写入）
     ├── verify_saver.py             ✅ T06  手动验证脚本（5 项断言）
+    ├── verify_overlay.py           ✅ T07  手动验证脚本（人工按 ESC）
     └── build.spec                  ⏳ T16  PyInstaller 配置
 ```
 
@@ -119,17 +118,28 @@ screenshot-tool/
 - **关键行为**：注册失败（权限/冲突）要降级提示
 - **关系**：被 main 注册；触发时调用 overlay.show()
 
-### 3.4 `overlay.py` — 全屏遮罩窗口 ⏳
+### 3.4 `overlay.py` — 全屏遮罩窗口 ✅ T07
 
-- **职责**：弹出全屏无边框窗口、半透明黑色背景、捕获鼠标拖拽、显示选区矩形
-- **输入**：屏幕尺寸列表（多显示器）
-- **输出**：用户确认后，返回区域坐标 `(x, y, w, h)`；取消返回 `None`
-- **关键行为**：
-  - 窗口置顶 + 任务栏图标隐藏
-  - ESC 取消、Enter 确认、右键取消
-  - 实时显示选区尺寸（"234 × 156"）
-  - 确认后**先隐藏自己**再触发 capture，避免截到遮罩
-- **关系**：调用 selection 模块的逻辑；确认后调用 capture 截图
+- **职责**：T07 阶段仅实现**全屏半透明遮罩窗口骨架**（鼠标事件、选区绘制、确认/取消均不在 T07 范围）
+- **类设计**：`OverlayWindow(QWidget)` 单类，无 Manager/Service/Controller/状态机
+- **窗口属性**（T07 完成）：
+  - Flag 组合：`FramelessWindowHint | WindowStaysOnTopHint | Tool`（无边框 + 置顶 + 任务栏不显示）
+  - `WA_TranslucentBackground = True`（允许半透明绘制）
+  - 覆盖范围：`QScreen.virtualGeometry()`（多显示器合成虚拟屏，**不**只覆盖主屏）
+- **绘制**（T07 完成）：
+  - `paintEvent` 仅 `QPainter.fillRect(self.rect(), QColor(0, 0, 0, 128))`（黑色 alpha=128 约 50% 透明）
+  - T07 **不画**选区矩形 / 十字线 / 文字
+- **交互**（T07 完成）：
+  - 仅 `keyPressEvent` 处理 ESC：`log.info("Overlay closed by ESC")` + `self.close()`
+  - T07 **不实现**鼠标事件、Enter 确认、右键取消
+- **不做的事**（T08-T10 范围）：
+  - ❌ 鼠标拖拽选区
+  - ❌ 选区矩形绘制
+  - ❌ Enter 确认 / 右键取消
+  - ❌ 截图前隐藏自己
+  - ❌ 任何 focus hack（`activateWindow` / `setFocus` 等）
+- **关系**：T07 阶段完全独立，**不调用** capture / selection / clipboard / saver；T08+ 才集成
+- **验证**：`scripts/verify_overlay.py` — 打印 8 项 setup 断言（屏幕数 / 几何 / 3 个 flag / 半透明属性 / 可见性）+ 人工按 ESC 关闭
 
 ### 3.5 `selection.py` — 矩形规范化 ✅ T04
 
@@ -251,8 +261,9 @@ main (DEFAULT_HOTKEY)
 | T04 | selection.py（矩形规范化） | ✅ 完成 | 10 个 pytest 用例通过（0.22s） |
 | T05 | clipboard.py（PIL → QImage → 剪贴板） | ✅ 完成 | `scripts/verify_clipboard.py` 跑通，Paint 粘贴确认 |
 | T06 | saver.py（自动保存到默认目录） | ✅ 完成 | `scripts/verify_saver.py` 5 项断言通过；同秒冲突 `_1`/`_2` 序号正确 |
+| T07 | overlay.py（全屏半透明遮罩 + ESC 关闭） | ✅ 完成 | `scripts/verify_overlay.py` 8 项 setup 断言通过；人工按 ESC 关闭 |
 
-**进度**：6 / 18 Task 完成（33%），处于**阶段 2（核心能力）**进行中。
+**进度**：7 / 18 Task 完成（39%），处于**阶段 3（UI 层）**进行中（1/5）。
 
 ---
 
@@ -260,7 +271,6 @@ main (DEFAULT_HOTKEY)
 
 | ID | 任务 | 依赖 | 预计 | 验证方式 |
 |----|------|------|------|----------|
-| T07 | overlay 框架：全屏无边框 + 半透明 | T04 | 30min | 运行后全屏黑罩出现，ESC 关闭 |
 | T08 | overlay 鼠标事件：按下/移动/抬起 + 选区矩形 | T07 | 30min | 拖拽有矩形跟随，右下角显示尺寸 |
 | T09 | overlay 确认/取消：Enter/ESC/右键 | T08 | 20min | 三种退出方式都能正常返回坐标或 None |
 | T10 | overlay 截图前隐藏自己 | T09 | 20min | 截出来的图里没有黑色遮罩 |
@@ -273,7 +283,7 @@ main (DEFAULT_HOTKEY)
 | T17 | 打包验证：干净环境运行 exe | T16 | 20min | 双击 exe 可启动，热键可用 |
 | T18 | README 完善：使用说明、快捷键、打包方法 | T17 | 20min | 新人按 README 能跑通 |
 
-**剩余**：12 / 18 Task 待开发，预计总耗时 ~5.4 小时。
+**剩余**：11 / 18 Task 待开发，预计总耗时 ~5.0 小时。
 
 ---
 
@@ -290,10 +300,11 @@ T03 ✅ → T04 ✅ → T05 ✅ → T06 ✅
 **产出**：脚本化跑通 capture → clipboard → saver（无 UI）
 **下一步**：T07（overlay 框架）
 
-### 阶段 3：UI 层
-T07 → T08 → T09 → T10 → T11
+### 阶段 3：UI 层（1/5 完成）
+T07 ✅ → T08 → T09 → T10 → T11
 **产出**：手动启动 overlay，能完整选区+截图+复制
 **注意**：T11 会临时用按钮或快捷键调起，等 T12 再换热键
+**下一步**：T08（鼠标事件 + 选区矩形）
 
 ### 阶段 4：集成
 T12 → T13 → T14
@@ -313,6 +324,7 @@ T16 → T17 → T18
 |--------|------|----------|
 | 阶段 1 结束 | ✅ | 基础能力（日志可写） |
 | 阶段 2 结束 | ✅ | 核心能力全验证（脚本化截图 + 复制 + 保存） |
+| 阶段 3 进行中 | 🔄 | 手动启动 overlay 部分验证（遮罩 + ESC 关闭） |
 | 阶段 3 结束 | ⏳ | 用户体验可验证（手动按钮能完整流程） |
 | 阶段 4 结束 | ⏳ | MVP 完成（热键可用） |
 | 阶段 6 结束 | ⏳ | 可交付 |
@@ -341,6 +353,18 @@ T16 → T17 → T18
     - pytest 单测放 `tests/`（仅 `test_selection.py`，唯一纯逻辑模块）
     - 手动验证脚本放 `scripts/`，命名 `verify_*.py`，用 `if __name__ == "__main__"` 入口
 12. **scripts/ 目录用途**：手动验证脚本（`verify_*.py`）+ PyInstaller 配置（`build.spec`）
+13. **overlay 单一类 + 单一入口（无 Manager/Service/Controller/状态机）**：
+    - T07 阶段 `OverlayWindow(QWidget)` 单类承担所有职责
+    - 不创建任何协调层（Manager/Service/Controller 都不引入）
+    - 不引入状态机；T08+ 通过方法扩展（mousePressEvent / paintEvent / keyPressEvent）而不是新增类
+    - 模块不暴露 `show_overlay()` 包装函数，调用方直接 `OverlayWindow().show()`
+14. **overlay 覆盖虚拟屏而非主屏**：
+    - 用 `QScreen.virtualGeometry()` 拿到多显示器合成边界，与 `capture.py` 的 `mss.monitors[0]` 对齐
+    - 选区坐标可以是负数（多屏布局：左侧副屏 x 为负），`selection.normalize()` 已支持
+15. **overlay 不用 focus hack**：
+    - 不调用 `activateWindow()` / `setFocus()` / `raise_()` 等
+    - 依赖 `show()` 后的 Qt 默认行为拿到焦点
+    - ESC 触发 `self.close()`，无任何全局键盘钩子（T07 阶段不引入 `keyboard` 库）
 
 ---
 
