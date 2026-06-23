@@ -1,12 +1,13 @@
 # Windows 截图工具 MVP 架构设计
 
-> 版本：v1.3
+> 版本：v1.4
 > 日期：2026-06-23
-> 状态：T01-T07 已完成，T08-T18 待开发
+> 状态：T01-T08 已完成，T09-T18 待开发
 > 变更：
-> - T07 完成：overlay.py 骨架（全屏半透明遮罩窗口 + ESC 关闭）
-> - 阶段 3（UI 层）开始：1/5 完成（T07）
-> - §3.4 overlay.py 从 ⏳ 改为 ✅ T07，描述与实现对齐（只 1 个类、只 1 个 paintEvent、只处理 ESC）
+> - T08 完成：overlay.py 鼠标拖拽选区（左键按下/拖动/松开 + cut-out 选区矩形 + get_selection_rect 接口）
+> - 阶段 3（UI 层）2/5 完成（T07 + T08）
+> - §3.4 overlay.py 加 T08 实现细节（3 个 mouseEvent、cut-out 4 条 fillRect、无 Manager/Service/Controller/状态机）
+> - 注意：T08 暂不显示选区尺寸文字（用户决定简化）
 
 ---
 
@@ -59,7 +60,7 @@ screenshot-tool/
 │   ├── clipboard.py                ✅ T05  剪贴板写入（QClipboard）
 │   ├── main.py                     ⏳      应用入口 + DEFAULT_HOTKEY 常量
 │   ├── hotkey.py                   ⏳      全局热键注册/注销
-│   ├── overlay.py                  ✅ T07  全屏遮罩窗口（仅 ESC 退出）
+│   ├── overlay.py                  ✅ T07+T08  全屏遮罩窗口 + 鼠标拖拽选区
 │   └── saver.py                    ✅ T06  文件保存 + DEFAULT_SAVE_DIR 常量
 ├── tests/
 │   ├── __init__.py
@@ -69,6 +70,7 @@ screenshot-tool/
     ├── verify_clipboard.py         ✅ T05  手动验证脚本（剪贴板写入）
     ├── verify_saver.py             ✅ T06  手动验证脚本（5 项断言）
     ├── verify_overlay.py           ✅ T07  手动验证脚本（人工按 ESC）
+    ├── verify_selection_drag.py    ✅ T08  手动验证脚本（人工拖拽选区）
     └── build.spec                  ⏳ T16  PyInstaller 配置
 ```
 
@@ -118,28 +120,43 @@ screenshot-tool/
 - **关键行为**：注册失败（权限/冲突）要降级提示
 - **关系**：被 main 注册；触发时调用 overlay.show()
 
-### 3.4 `overlay.py` — 全屏遮罩窗口 ✅ T07
+### 3.4 `overlay.py` — 全屏遮罩窗口 ✅ T07 + ✅ T08
 
-- **职责**：T07 阶段仅实现**全屏半透明遮罩窗口骨架**（鼠标事件、选区绘制、确认/取消均不在 T07 范围）
-- **类设计**：`OverlayWindow(QWidget)` 单类，无 Manager/Service/Controller/状态机
-- **窗口属性**（T07 完成）：
+- **职责**：全屏半透明遮罩窗口 + 鼠标拖拽选区（cut-out 视觉效果）
+- **类设计**：`OverlayWindow(QWidget)` 单类，**无 Manager/Service/Controller/状态机**
+- **窗口属性**：
   - Flag 组合：`FramelessWindowHint | WindowStaysOnTopHint | Tool`（无边框 + 置顶 + 任务栏不显示）
   - `WA_TranslucentBackground = True`（允许半透明绘制）
   - 覆盖范围：`QScreen.virtualGeometry()`（多显示器合成虚拟屏，**不**只覆盖主屏）
-- **绘制**（T07 完成）：
-  - `paintEvent` 仅 `QPainter.fillRect(self.rect(), QColor(0, 0, 0, 128))`（黑色 alpha=128 约 50% 透明）
-  - T07 **不画**选区矩形 / 十字线 / 文字
-- **交互**（T07 完成）：
-  - 仅 `keyPressEvent` 处理 ESC：`log.info("Overlay closed by ESC")` + `self.close()`
-  - T07 **不实现**鼠标事件、Enter 确认、右键取消
-- **不做的事**（T08-T10 范围）：
-  - ❌ 鼠标拖拽选区
-  - ❌ 选区矩形绘制
+  - 光标：`Qt.CursorShape.CrossCursor`（_setup_window 中设一次）
+- **成员变量**（全部私有）：
+  - `_start: QPoint | None` — 拖拽起点
+  - `_end: QPoint | None` — 拖拽终点
+  - `_is_dragging: bool` — 是否正在拖拽
+- **T07 行为保留**：ESC 关闭（`log.info("Overlay closed by ESC")` + `self.close()`）
+- **T08 鼠标事件**：
+  - `mousePressEvent`：左键按下 → 记录 `_start`，`_end = _start`，`_is_dragging = True`
+  - `mouseMoveEvent`：仅 `_is_dragging` 时更新 `_end`
+  - `mouseReleaseEvent`：左键松开 → 更新 `_end`，`_is_dragging = False`（**不**关闭窗口，**不**返回坐标 — T09 才做）
+  - 右键按下/释放：**不处理**（T09 加右键取消）
+- **T08 paintEvent**：
+  - 未开始拖拽 → 全屏暗罩（沿用 T07 行为）
+  - 选区退化（w 或 h ≤ 0）→ 全屏暗罩（沿用 T07 行为）
+  - 正常选区 → 4 条 `fillRect` 围成 cut-out 暗罩 + 1px 白色边框（alpha=200）
+- **T08 不做**：
+  - ❌ 显示尺寸文字（用户决定简化，T08 不画 "234 × 156"）
+  - ❌ Enter 确认 / 右键取消（T09）
+  - ❌ 截图前隐藏自己（T10）
+- **公共接口**：
+  - `get_selection_rect() -> tuple[int, int, int, int] | None` — 返回规范化矩形 `(x, y, w, h)` 或 None（未开始拖拽时）；T09 用它拿确认坐标
+- **不做的事**（T09-T10 范围）：
   - ❌ Enter 确认 / 右键取消
   - ❌ 截图前隐藏自己
-  - ❌ 任何 focus hack（`activateWindow` / `setFocus` 等）
-- **关系**：T07 阶段完全独立，**不调用** capture / selection / clipboard / saver；T08+ 才集成
-- **验证**：`scripts/verify_overlay.py` — 打印 8 项 setup 断言（屏幕数 / 几何 / 3 个 flag / 半透明属性 / 可见性）+ 人工按 ESC 关闭
+  - ❌ 任何 focus hack（`activateWindow` / `setFocus` / `raise_` 等）
+- **关系**：T08 阶段调用 `selection.normalize`，**不调用** capture / clipboard / saver；T10+ 才集成 capture
+- **验证**：
+  - `scripts/verify_overlay.py`（T07）— 8 项 setup 断言 + 人工按 ESC
+  - `scripts/verify_selection_drag.py`（T08）— 纯人工拖拽脚本，无 QTimer/sendEvent/私有变量断言
 
 ### 3.5 `selection.py` — 矩形规范化 ✅ T04
 
@@ -262,8 +279,9 @@ main (DEFAULT_HOTKEY)
 | T05 | clipboard.py（PIL → QImage → 剪贴板） | ✅ 完成 | `scripts/verify_clipboard.py` 跑通，Paint 粘贴确认 |
 | T06 | saver.py（自动保存到默认目录） | ✅ 完成 | `scripts/verify_saver.py` 5 项断言通过；同秒冲突 `_1`/`_2` 序号正确 |
 | T07 | overlay.py（全屏半透明遮罩 + ESC 关闭） | ✅ 完成 | `scripts/verify_overlay.py` 8 项 setup 断言通过；人工按 ESC 关闭 |
+| T08 | overlay.py 鼠标拖拽选区（cut-out + get_selection_rect） | ✅ 完成 | `scripts/verify_selection_drag.py` 纯人工拖拽 checklist；自检 8 项逻辑断言全过 |
 
-**进度**：7 / 18 Task 完成（39%），处于**阶段 3（UI 层）**进行中（1/5）。
+**进度**：8 / 18 Task 完成（44%），处于**阶段 3（UI 层）**进行中（2/5）。
 
 ---
 
@@ -271,7 +289,6 @@ main (DEFAULT_HOTKEY)
 
 | ID | 任务 | 依赖 | 预计 | 验证方式 |
 |----|------|------|------|----------|
-| T08 | overlay 鼠标事件：按下/移动/抬起 + 选区矩形 | T07 | 30min | 拖拽有矩形跟随，右下角显示尺寸 |
 | T09 | overlay 确认/取消：Enter/ESC/右键 | T08 | 20min | 三种退出方式都能正常返回坐标或 None |
 | T10 | overlay 截图前隐藏自己 | T09 | 20min | 截出来的图里没有黑色遮罩 |
 | T11 | UI 集成测试：overlay → capture → clipboard → saver 一条龙 | T10, T05, T06 | 30min | 按 Enter 后图片已在剪贴板 + 已落盘到默认目录 |
@@ -283,7 +300,7 @@ main (DEFAULT_HOTKEY)
 | T17 | 打包验证：干净环境运行 exe | T16 | 20min | 双击 exe 可启动，热键可用 |
 | T18 | README 完善：使用说明、快捷键、打包方法 | T17 | 20min | 新人按 README 能跑通 |
 
-**剩余**：11 / 18 Task 待开发，预计总耗时 ~5.0 小时。
+**剩余**：10 / 18 Task 待开发，预计总耗时 ~4.5 小时。
 
 ---
 
@@ -300,11 +317,11 @@ T03 ✅ → T04 ✅ → T05 ✅ → T06 ✅
 **产出**：脚本化跑通 capture → clipboard → saver（无 UI）
 **下一步**：T07（overlay 框架）
 
-### 阶段 3：UI 层（1/5 完成）
-T07 ✅ → T08 → T09 → T10 → T11
+### 阶段 3：UI 层（2/5 完成）
+T07 ✅ → T08 ✅ → T09 → T10 → T11
 **产出**：手动启动 overlay，能完整选区+截图+复制
 **注意**：T11 会临时用按钮或快捷键调起，等 T12 再换热键
-**下一步**：T08（鼠标事件 + 选区矩形）
+**下一步**：T09（确认/取消：Enter/ESC/右键）
 
 ### 阶段 4：集成
 T12 → T13 → T14
@@ -324,7 +341,7 @@ T16 → T17 → T18
 |--------|------|----------|
 | 阶段 1 结束 | ✅ | 基础能力（日志可写） |
 | 阶段 2 结束 | ✅ | 核心能力全验证（脚本化截图 + 复制 + 保存） |
-| 阶段 3 进行中 | 🔄 | 手动启动 overlay 部分验证（遮罩 + ESC 关闭） |
+| 阶段 3 进行中 | 🔄 | 手动启动 overlay 部分验证（遮罩 + 拖拽选区） |
 | 阶段 3 结束 | ⏳ | 用户体验可验证（手动按钮能完整流程） |
 | 阶段 4 结束 | ⏳ | MVP 完成（热键可用） |
 | 阶段 6 结束 | ⏳ | 可交付 |
@@ -365,6 +382,23 @@ T16 → T17 → T18
     - 不调用 `activateWindow()` / `setFocus()` / `raise_()` 等
     - 依赖 `show()` 后的 Qt 默认行为拿到焦点
     - ESC 触发 `self.close()`，无任何全局键盘钩子（T07 阶段不引入 `keyboard` 库）
+16. **overlay 选区 cut-out 视觉效果**：
+    - 选区内**透明**（4 条 fillRect 围出 cut-out），用户能看到原始屏幕内容
+    - 选区外 50% 半透明黑（沿用 T07 alpha=128）
+    - 选区边框 1px 白色（alpha=200）
+    - 行业惯例：Snipping Tool / 微信截图 / macOS 截图都这么做
+17. **T08 不显示尺寸文字**：
+    - 用户决定简化 T08 范围，**不**画 "234 × 156" 文字
+    - T09+ 若需要再加（目前不在 MVP 范围内）
+18. **GUI 模块不写 pytest**：
+    - `overlay.py`（T07/T08）只有 `scripts/verify_*.py` 手动验证脚本
+    - pytest 单测仅限纯逻辑模块（`selection.py`）
+    - GUI 模块用 Qt 事件循环，单元测试需要 mock Qt 事件流，复杂度高，MVP 不值得
+19. **T08 verify 脚本只做人工验证**：
+    - 与 T07 verify_overlay.py 一致（人工按 ESC）
+    - **不**用 QTimer + QMouseEvent sendEvent 模拟拖拽（虽然技术上可行）
+    - **不**访问 `_start` / `_end` / `_is_dragging` 私有变量做断言
+    - 手动 checklist：5 项视觉验证（十字光标 / 拖拽跟随 / 任意方向 / 点击不拖 / ESC 关闭）
 
 ---
 

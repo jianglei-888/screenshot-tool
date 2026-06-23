@@ -4,7 +4,7 @@
 
 ## 状态
 
-**当前进度**：T01-T07 已完成（7 / 18 = 39%），阶段 3（UI 层）进行中（1/5）。
+**当前进度**：T01-T08 已完成（8 / 18 = 44%），阶段 3（UI 层）进行中（2/5）。
 
 | 已完成 | 模块 | 状态 |
 |--------|------|------|
@@ -13,19 +13,20 @@
 | T04 | `src/selection.py` | ✅ 矩形规范化（纯函数） |
 | T05 | `src/clipboard.py` | ✅ 剪贴板写入 |
 | T06 | `src/saver.py` | ✅ 自动保存到默认目录 |
-| T07 | `src/overlay.py` | ✅ 全屏半透明遮罩（仅 ESC 关闭） |
+| T07 | `src/overlay.py` | ✅ 全屏半透明遮罩（ESC 关闭） |
+| T08 | `src/overlay.py` | ✅ 鼠标拖拽选区（cut-out 视觉效果） |
 
 **注意**：目前 `python -m src.main` 还不能跑（main / hotkey 待开发，T12-T13）。已完成的模块各自有手动验证脚本可单独跑通。
 
-**T07 当前能力**：可以创建覆盖虚拟屏的半透明遮罩窗口，按 ESC 关闭；尚未支持鼠标选区、确认/取消、截图调用。
+**T08 当前能力**：鼠标拖拽选区（左键按下/拖动/松开），选区矩形 cut-out（选区内透明，外侧 50% 暗罩 + 白边）。尚未支持 Enter 确认、右键取消、截图调用、显示尺寸文字。
 
 完整架构与开发计划见 [docs/architecture.md](docs/architecture.md)。
 
 ## 功能范围（MVP）
 
 - 全局快捷键启动截图模式（T12-T13 待实现）
-- 鼠标拖拽选择截图区域（T08-T10 待实现）
-- 全屏半透明遮罩 + ESC 关闭（✅ T07 骨架）
+- 鼠标拖拽选择截图区域（✅ T08 选区，❌ T09 确认/取消）
+- 全屏半透明遮罩 + ESC 关闭（✅ T07）
 - 自动复制到系统剪贴板（✅ T05）
 - **自动保存**为 PNG 到 `~/Pictures/Screenshots`（✅ T06，无保存对话框）
 
@@ -63,10 +64,11 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt
 
 # 2. 跑已实现模块的验证脚本（按需）
-.venv/Scripts/python.exe scripts/verify_capture.py      # 截全屏 + 区域
-.venv/Scripts/python.exe scripts/verify_clipboard.py    # 写剪贴板（需手动开 Paint 粘贴确认）
-.venv/Scripts/python.exe scripts/verify_saver.py        # 5 项断言
-.venv/Scripts/python.exe scripts/verify_overlay.py      # 弹全屏遮罩，按 ESC 关闭
+.venv/Scripts/python.exe scripts/verify_capture.py          # 截全屏 + 区域
+.venv/Scripts/python.exe scripts/verify_clipboard.py        # 写剪贴板（需手动开 Paint 粘贴确认）
+.venv/Scripts/python.exe scripts/verify_saver.py            # 5 项断言
+.venv/Scripts/python.exe scripts/verify_overlay.py          # 弹全屏遮罩，按 ESC 关闭
+.venv/Scripts/python.exe scripts/verify_selection_drag.py   # 人工拖拽选区，按 ESC 关闭
 
 # 3. 跑 pytest 单测
 .venv/Scripts/python.exe -m pytest tests/ -v
@@ -91,7 +93,7 @@ screenshot-tool/
 │   ├── selection.py                ✅ T04  矩形规范化
 │   ├── clipboard.py                ✅ T05  剪贴板写入
 │   ├── saver.py                    ✅ T06  文件保存
-│   ├── overlay.py                  ✅ T07  全屏遮罩窗口（仅 ESC 关闭）
+│   ├── overlay.py                  ✅ T07+T08  全屏遮罩 + 鼠标拖拽选区
 │   ├── main.py                     ⏳      应用入口（T13）
 │   └── hotkey.py                   ⏳      全局热键（T12）
 ├── tests/
@@ -101,6 +103,7 @@ screenshot-tool/
     ├── verify_clipboard.py         ✅ T05  手动验证脚本
     ├── verify_saver.py             ✅ T06  手动验证脚本（5 项断言）
     ├── verify_overlay.py           ✅ T07  手动验证脚本（人工按 ESC）
+    ├── verify_selection_drag.py    ✅ T08  手动验证脚本（人工拖拽）
     └── build.spec                  ⏳ T16  PyInstaller 配置
 ```
 
