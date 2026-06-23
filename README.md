@@ -4,7 +4,7 @@
 
 ## 状态
 
-**当前进度**：T01-T08 已完成（8 / 18 = 44%），阶段 3（UI 层）进行中（2/5）。
+**当前进度**：T01-T11 已完成（11 / 18 = 61%），**阶段 3（UI 层）收尾**（5/5）。
 
 | 已完成 | 模块 | 状态 |
 |--------|------|------|
@@ -15,17 +15,25 @@
 | T06 | `src/saver.py` | ✅ 自动保存到默认目录 |
 | T07 | `src/overlay.py` | ✅ 全屏半透明遮罩（ESC 关闭） |
 | T08 | `src/overlay.py` | ✅ 鼠标拖拽选区（cut-out 视觉效果） |
+| T09 | `src/overlay.py` | ✅ Enter 确认 / ESC / 右键取消 + `@property result` |
+| T10 | `src/overlay.py` | ✅ 确认后 `hide()` 再 `close()`（截图中不含遮罩） |
+| T11 | `scripts/verify_integration.py` | ✅ 端到端集成测试（overlay → capture → clipboard → saver） |
 
-**注意**：目前 `python -m src.main` 还不能跑（main / hotkey 待开发，T12-T13）。已完成的模块各自有手动验证脚本可单独跑通。
+**当前能力**：手动启动 overlay 后，可完成"拖拽选区 → Enter 确认 → 截图中不含遮罩 → 自动复制到剪贴板 → 自动保存到默认目录"全流程。**OverlayWindow 保持纯 UI 职责**——业务串联发生在调用方层。
 
-**T08 当前能力**：鼠标拖拽选区（左键按下/拖动/松开），选区矩形 cut-out（选区内透明，外侧 50% 暗罩 + 白边）。尚未支持 Enter 确认、右键取消、截图调用、显示尺寸文字。
+**未实现**：
+- ❌ 全局热键启动（main.py + hotkey.py 待 T12-T13）
+- ❌ 错误处理包装（T15）
+- ❌ 打包为 exe（T16-T17）
+
+**已知未覆盖项**：T11 验证脚本未做截图视觉断言（仅验流程跑通）；T14 全流程联调时**人工事后打开 PNG**确认无残影。
 
 完整架构与开发计划见 [docs/architecture.md](docs/architecture.md)。
 
 ## 功能范围（MVP）
 
 - 全局快捷键启动截图模式（T12-T13 待实现）
-- 鼠标拖拽选择截图区域（✅ T08 选区，❌ T09 确认/取消）
+- 鼠标拖拽选择截图区域（✅ T08 选区，✅ T09 确认/取消，✅ T10 隐藏遮罩）
 - 全屏半透明遮罩 + ESC 关闭（✅ T07）
 - 自动复制到系统剪贴板（✅ T05）
 - **自动保存**为 PNG 到 `~/Pictures/Screenshots`（✅ T06，无保存对话框）
@@ -69,6 +77,9 @@ python -m venv .venv
 .venv/Scripts/python.exe scripts/verify_saver.py            # 5 项断言
 .venv/Scripts/python.exe scripts/verify_overlay.py          # 弹全屏遮罩，按 ESC 关闭
 .venv/Scripts/python.exe scripts/verify_selection_drag.py   # 人工拖拽选区，按 ESC 关闭
+.venv/Scripts/python.exe scripts/verify_overlay_confirm.py  # T09 QTest 自动化（4 子用例 / 8 断言）
+.venv/Scripts/python.exe scripts/verify_overlay_hide.py     # T10 QTest 自动化（3 子用例 / 6 断言）
+.venv/Scripts/python.exe scripts/verify_integration.py      # T11 端到端集成（4 子用例 / 13 断言）
 
 # 3. 跑 pytest 单测
 .venv/Scripts/python.exe -m pytest tests/ -v
@@ -93,7 +104,7 @@ screenshot-tool/
 │   ├── selection.py                ✅ T04  矩形规范化
 │   ├── clipboard.py                ✅ T05  剪贴板写入
 │   ├── saver.py                    ✅ T06  文件保存
-│   ├── overlay.py                  ✅ T07+T08  全屏遮罩 + 鼠标拖拽选区
+│   ├── overlay.py                  ✅ T07+T08+T09+T10  全屏遮罩 + 拖拽选区 + 确认/取消 + hide
 │   ├── main.py                     ⏳      应用入口（T13）
 │   └── hotkey.py                   ⏳      全局热键（T12）
 ├── tests/
@@ -104,6 +115,9 @@ screenshot-tool/
     ├── verify_saver.py             ✅ T06  手动验证脚本（5 项断言）
     ├── verify_overlay.py           ✅ T07  手动验证脚本（人工按 ESC）
     ├── verify_selection_drag.py    ✅ T08  手动验证脚本（人工拖拽）
+    ├── verify_overlay_confirm.py   ✅ T09  QTest 自动化（4 子用例 / 8 断言）
+    ├── verify_overlay_hide.py      ✅ T10  QTest 自动化（3 子用例 / 6 断言）
+    ├── verify_integration.py       ✅ T11  端到端集成（4 子用例 / 13 断言）
     └── build.spec                  ⏳ T16  PyInstaller 配置
 ```
 

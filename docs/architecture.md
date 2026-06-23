@@ -1,13 +1,17 @@
 # Windows 截图工具 MVP 架构设计
 
-> 版本：v1.4
+> 版本：v1.5
 > 日期：2026-06-23
-> 状态：T01-T08 已完成，T09-T18 待开发
+> 状态：T01-T11 已完成，T12-T18 待开发
 > 变更：
-> - T08 完成：overlay.py 鼠标拖拽选区（左键按下/拖动/松开 + cut-out 选区矩形 + get_selection_rect 接口）
-> - 阶段 3（UI 层）2/5 完成（T07 + T08）
-> - §3.4 overlay.py 加 T08 实现细节（3 个 mouseEvent、cut-out 4 条 fillRect、无 Manager/Service/Controller/状态机）
-> - 注意：T08 暂不显示选区尺寸文字（用户决定简化）
+> - T09 完成：overlay 确认/取消（Enter 确认 / ESC / 右键取消） + `_result` 字段 + `@property result`
+> - T10 完成：overlay 确认后 `hide()` 再 `close()`，截图中不含遮罩/白边/光标
+> - T11 完成：UI 集成测试（verify 脚本串联 capture/clipboard/saver，**OverlayWindow 保持纯 UI 职责**）
+> - 阶段 3（UI 层）5/5 完成
+> - §3.4 overlay.py 描述补 T09/T10/T11 行为
+> - 模块关系图：业务串联发生在 verify 脚本层（T11），不在 overlay 内部
+> - 关键决策记录：+T09/T10/T11 决策
+> - 注意：T11 验证脚本未做截图视觉断言（仅验流程跑通），T14 全流程联调确认无残影
 
 ---
 
@@ -60,7 +64,7 @@ screenshot-tool/
 │   ├── clipboard.py                ✅ T05  剪贴板写入（QClipboard）
 │   ├── main.py                     ⏳      应用入口 + DEFAULT_HOTKEY 常量
 │   ├── hotkey.py                   ⏳      全局热键注册/注销
-│   ├── overlay.py                  ✅ T07+T08  全屏遮罩窗口 + 鼠标拖拽选区
+│   ├── overlay.py                  ✅ T07+T08+T09+T10  全屏遮罩 + 拖拽选区 + 确认/取消 + hide
 │   └── saver.py                    ✅ T06  文件保存 + DEFAULT_SAVE_DIR 常量
 ├── tests/
 │   ├── __init__.py
@@ -71,6 +75,9 @@ screenshot-tool/
     ├── verify_saver.py             ✅ T06  手动验证脚本（5 项断言）
     ├── verify_overlay.py           ✅ T07  手动验证脚本（人工按 ESC）
     ├── verify_selection_drag.py    ✅ T08  手动验证脚本（人工拖拽选区）
+    ├── verify_overlay_confirm.py   ✅ T09  手动验证脚本（Enter/ESC/右键 + result）
+    ├── verify_overlay_hide.py      ✅ T10  手动验证脚本（hide 行为 + 回归）
+    ├── verify_integration.py       ✅ T11  端到端集成验证（4 子用例 / 13 断言）
     └── build.spec                  ⏳ T16  PyInstaller 配置
 ```
 
@@ -120,9 +127,10 @@ screenshot-tool/
 - **关键行为**：注册失败（权限/冲突）要降级提示
 - **关系**：被 main 注册；触发时调用 overlay.show()
 
-### 3.4 `overlay.py` — 全屏遮罩窗口 ✅ T07 + ✅ T08
+### 3.4 `overlay.py` — 全屏遮罩窗口 ✅ T07 + ✅ T08 + ✅ T09 + ✅ T10
 
-- **职责**：全屏半透明遮罩窗口 + 鼠标拖拽选区（cut-out 视觉效果）
+- **职责**：全屏半透明遮罩窗口 + 鼠标拖拽选区（cut-out 视觉效果）+ 确认/取消 + 截图前自我隐藏
+- **核心约束**：**OverlayWindow 保持纯 UI 职责**——**不**直接调用 capture / clipboard / saver；T11 集成发生在 verify 脚本层
 - **类设计**：`OverlayWindow(QWidget)` 单类，**无 Manager/Service/Controller/状态机**
 - **窗口属性**：
   - Flag 组合：`FramelessWindowHint | WindowStaysOnTopHint | Tool`（无边框 + 置顶 + 任务栏不显示）
@@ -133,30 +141,50 @@ screenshot-tool/
   - `_start: QPoint | None` — 拖拽起点
   - `_end: QPoint | None` — 拖拽终点
   - `_is_dragging: bool` — 是否正在拖拽
-- **T07 行为保留**：ESC 关闭（`log.info("Overlay closed by ESC")` + `self.close()`）
+  - `_result: tuple[int, int, int, int] | None` — 用户最终选择（T09 新增，确认存坐标 / 取消 None）
+- **T07 行为保留**：ESC 关闭（T09 起同时标记 `_result = None`）
 - **T08 鼠标事件**：
   - `mousePressEvent`：左键按下 → 记录 `_start`，`_end = _start`，`_is_dragging = True`
   - `mouseMoveEvent`：仅 `_is_dragging` 时更新 `_end`
-  - `mouseReleaseEvent`：左键松开 → 更新 `_end`，`_is_dragging = False`（**不**关闭窗口，**不**返回坐标 — T09 才做）
-  - 右键按下/释放：**不处理**（T09 加右键取消）
+  - `mouseReleaseEvent`：左键松开 → 更新 `_end`，`_is_dragging = False`
+  - **T09 右键**：`mousePressEvent` 右键 → `_result = None` + `close()`（取消）
 - **T08 paintEvent**：
   - 未开始拖拽 → 全屏暗罩（沿用 T07 行为）
   - 选区退化（w 或 h ≤ 0）→ 全屏暗罩（沿用 T07 行为）
   - 正常选区 → 4 条 `fillRect` 围成 cut-out 暗罩 + 1px 白色边框（alpha=200）
-- **T08 不做**：
-  - ❌ 显示尺寸文字（用户决定简化，T08 不画 "234 × 156"）
-  - ❌ Enter 确认 / 右键取消（T09）
-  - ❌ 截图前隐藏自己（T10）
+- **T09 keyPressEvent**：
+  - `Key_Escape` → `_result = None` + log + `close()`
+  - `Key_Return` / `Key_Enter` → 取 `get_selection_rect()`，退化场景忽略，否则 `_result = rect` + log + 进入 T10 流程
+  - 其他键 → `super().keyPressEvent(event)`
+- **T10 确认流程**（`keyPressEvent(Enter)` 路径）：
+  ```
+  1. 取规范化矩形 → 存到 _result
+  2. log "Overlay confirmed"
+  3. self.hide()        ← 窗口从屏幕消失（保证截图中不含遮罩/白边/光标）
+  4. self.close()       ← 销毁对象
+  ```
+  **不做** QTimer / processEvents / sleep 延迟——T10 决策"实测无问题就不动"；T14 联调时若发现残影再决定
+- **T10 不做**（明确划界）：
+  - ❌ 不在 hide 后调 capture / clipboard / saver（T11 在 verify 脚本层集成）
+  - ❌ 不引入回调钩子（`set_on_confirm` 等）
+  - ❌ 不引入 signal/slot
+  - ❌ 不重写 closeEvent
 - **公共接口**：
-  - `get_selection_rect() -> tuple[int, int, int, int] | None` — 返回规范化矩形 `(x, y, w, h)` 或 None（未开始拖拽时）；T09 用它拿确认坐标
-- **不做的事**（T09-T10 范围）：
-  - ❌ Enter 确认 / 右键取消
-  - ❌ 截图前隐藏自己
+  - `get_selection_rect() -> tuple[int, int, int, int] | None` — 返回规范化矩形（拖拽中或拖完）
+  - `@property result -> tuple[int, int, int, int] | None` — 用户最终选择（T09）；调用方在 `app.exec()` 返回后读
+- **不做的事**：
   - ❌ 任何 focus hack（`activateWindow` / `setFocus` / `raise_` 等）
-- **关系**：T08 阶段调用 `selection.normalize`，**不调用** capture / clipboard / saver；T10+ 才集成 capture
+  - ❌ 显示尺寸文字（用户决定简化）
+  - ❌ 集成业务模块（capture / clipboard / saver）
+- **关系**：
+  - 调用 `selection.normalize`（T08 起）
+  - **不调用** capture / clipboard / saver
+  - T11 集成由 verify 脚本驱动：`window.result` → capture_region → copy_image → save_image
 - **验证**：
   - `scripts/verify_overlay.py`（T07）— 8 项 setup 断言 + 人工按 ESC
   - `scripts/verify_selection_drag.py`（T08）— 纯人工拖拽脚本，无 QTimer/sendEvent/私有变量断言
+  - `scripts/verify_overlay_confirm.py`（T09）— QTest 模拟 Enter/ESC/右键，4 子用例 / 8 断言
+  - `scripts/verify_overlay_hide.py`（T10）— QTest 模拟 Enter/ESC，3 子用例 / 6 断言（含 T09 回归）
 
 ### 3.5 `selection.py` — 矩形规范化 ✅ T04
 
@@ -235,16 +263,26 @@ screenshot-tool/
 ### 模块关系图
 
 ```
-main (DEFAULT_HOTKEY)
+T13 main.py（未来）
  ├── logger (init)
  ├── hotkey (register → 触发 overlay.show)
  └── overlay.show()
-      ├── selection (计算规范坐标)
-      ├── 隐藏自己
-      ├── capture (mss 截图 + 裁剪)
-      ├── clipboard (自动复制)
-      └── saver (DEFAULT_SAVE_DIR，用户触发保存)
+      └── OverlayWindow（纯 UI 职责，不调业务模块）
+            - 拖拽选区（T08）
+            - Enter/ESC/右键（T09）
+            - hide + close（T10）
+
+T11 集成（发生在 verify_integration.py 脚本层，不在 overlay 内部）：
+   window.result
+     ↓
+   capture.capture_region(*rect) → PIL.Image
+     ↓
+   clipboard.copy_image(image)   → True
+     ↓
+   saver.save_image(image)       → Path
 ```
+
+**关键约束**（T11 决策）：**OverlayWindow 保持纯 UI 职责**——业务串联在调用方层（verify 脚本 / 未来 main.py），不在 overlay 内部。这样 T13 main.py 集成时不需要回头改 overlay.py。
 
 ---
 
@@ -280,8 +318,11 @@ main (DEFAULT_HOTKEY)
 | T06 | saver.py（自动保存到默认目录） | ✅ 完成 | `scripts/verify_saver.py` 5 项断言通过；同秒冲突 `_1`/`_2` 序号正确 |
 | T07 | overlay.py（全屏半透明遮罩 + ESC 关闭） | ✅ 完成 | `scripts/verify_overlay.py` 8 项 setup 断言通过；人工按 ESC 关闭 |
 | T08 | overlay.py 鼠标拖拽选区（cut-out + get_selection_rect） | ✅ 完成 | `scripts/verify_selection_drag.py` 纯人工拖拽 checklist；自检 8 项逻辑断言全过 |
+| T09 | overlay.py 确认/取消（Enter/ESC/右键 + result 属性） | ✅ 完成 | `scripts/verify_overlay_confirm.py` 4 子用例 / 8 断言全过 |
+| T10 | overlay.py 截图前 hide 再 close | ✅ 完成 | `scripts/verify_overlay_hide.py` 3 子用例 / 6 断言全过；T09 回归 8/8 仍通过 |
+| T11 | UI 集成测试（overlay → capture → clipboard → saver） | ✅ 完成 | `scripts/verify_integration.py` 4 子用例 / 13 断言全过 |
 
-**进度**：8 / 18 Task 完成（44%），处于**阶段 3（UI 层）**进行中（2/5）。
+**进度**：11 / 18 Task 完成（61%），**阶段 3（UI 层）收尾**（5/5 完成）。
 
 ---
 
@@ -289,18 +330,15 @@ main (DEFAULT_HOTKEY)
 
 | ID | 任务 | 依赖 | 预计 | 验证方式 |
 |----|------|------|------|----------|
-| T09 | overlay 确认/取消：Enter/ESC/右键 | T08 | 20min | 三种退出方式都能正常返回坐标或 None |
-| T10 | overlay 截图前隐藏自己 | T09 | 20min | 截出来的图里没有黑色遮罩 |
-| T11 | UI 集成测试：overlay → capture → clipboard → saver 一条龙 | T10, T05, T06 | 30min | 按 Enter 后图片已在剪贴板 + 已落盘到默认目录 |
 | T12 | hotkey.py：注册全局热键 | T11 | 25min | 按下 `ctrl+shift+a` 触发回调 |
 | T13 | main.py：装配 + 启动事件循环 | T12, T11 | 30min | `python -m src.main` 启动后热键可用，退出干净 |
-| T14 | 全流程联调：热键 → 截图 → 剪贴板 → 保存 | T13 | 30min | 实测一次完整流程，符合 PRD 6 步 |
+| T14 | 全流程联调：热键 → 截图 → 剪贴板 → 保存 | T13 | 30min | 实测一次完整流程，符合 PRD 6 步；**确认截图中无遮罩残留** |
 | T15 | 错误处理：热键/截图/剪贴板失败的日志与降级 | T14 | 25min | 故意触发错误，进程不崩，有日志 |
 | T16 | build.spec：PyInstaller 配置 | T14 | 25min | `pyinstaller scripts/build.spec` 成功生成 exe |
 | T17 | 打包验证：干净环境运行 exe | T16 | 20min | 双击 exe 可启动，热键可用 |
 | T18 | README 完善：使用说明、快捷键、打包方法 | T17 | 20min | 新人按 README 能跑通 |
 
-**剩余**：10 / 18 Task 待开发，预计总耗时 ~4.5 小时。
+**剩余**：7 / 18 Task 待开发，预计总耗时 ~3 小时。
 
 ---
 
@@ -317,11 +355,11 @@ T03 ✅ → T04 ✅ → T05 ✅ → T06 ✅
 **产出**：脚本化跑通 capture → clipboard → saver（无 UI）
 **下一步**：T07（overlay 框架）
 
-### 阶段 3：UI 层（2/5 完成）
-T07 ✅ → T08 ✅ → T09 → T10 → T11
-**产出**：手动启动 overlay，能完整选区+截图+复制
-**注意**：T11 会临时用按钮或快捷键调起，等 T12 再换热键
-**下一步**：T09（确认/取消：Enter/ESC/右键）
+### 阶段 3：UI 层（5/5 完成）
+T07 ✅ → T08 ✅ → T09 ✅ → T10 ✅ → T11 ✅
+**产出**：手动启动 overlay，能完整选区+截图+复制+保存
+**注意**：T11 集成由 verify 脚本驱动，overlay 保持纯 UI 职责
+**下一步**：T12（hotkey.py：注册全局热键）
 
 ### 阶段 4：集成
 T12 → T13 → T14
@@ -341,8 +379,7 @@ T16 → T17 → T18
 |--------|------|----------|
 | 阶段 1 结束 | ✅ | 基础能力（日志可写） |
 | 阶段 2 结束 | ✅ | 核心能力全验证（脚本化截图 + 复制 + 保存） |
-| 阶段 3 进行中 | 🔄 | 手动启动 overlay 部分验证（遮罩 + 拖拽选区） |
-| 阶段 3 结束 | ⏳ | 用户体验可验证（手动按钮能完整流程） |
+| 阶段 3 结束 | ✅ | 用户体验可验证（手动按钮能完整流程） |
 | 阶段 4 结束 | ⏳ | MVP 完成（热键可用） |
 | 阶段 6 结束 | ⏳ | 可交付 |
 
@@ -399,14 +436,36 @@ T16 → T17 → T18
     - **不**用 QTimer + QMouseEvent sendEvent 模拟拖拽（虽然技术上可行）
     - **不**访问 `_start` / `_end` / `_is_dragging` 私有变量做断言
     - 手动 checklist：5 项视觉验证（十字光标 / 拖拽跟随 / 任意方向 / 点击不拖 / ESC 关闭）
+20. **T09 OverlayWindow 三种退出方式**：
+    - Enter 确认（合法选区，存 `_result`）/ ESC 取消（`_result = None`）/ 右键取消（`_result = None`）
+    - 退化场景（无选区 / w≤0 / h≤0）按 Enter 忽略不关
+    - 调用方通过 `@property result` 同步读取最终选择
+    - 失败用例：T09 之前曾提议 `set_on_confirm` 回调钩子，**用户明确反对**——T10 决策时撤回；T11 也未引入
+21. **T10 确认流程 = `hide()` + `close()`，无延迟**：
+    - Enter 流程在 `close()` 前增加 `self.hide()`，让窗口从屏幕消失
+    - **不**引入 `QTimer.singleShot(0, ...)` / `app.processEvents()` / `time.sleep(0.05)` 等延迟方案
+    - T10 决策："实测无问题就不动"；T14 联调时如发现残影再决定
+    - **不**引入回调钩子（`set_on_confirm` / `_process_confirm` / `_on_confirm`）——不为 T11 预留
+22. **T11 OverlayWindow 保持纯 UI 职责**：
+    - 业务串联（capture → clipboard → saver）**不**在 overlay 内部，**在 verify 脚本层**
+    - verify 脚本读 `window.result` → 调 `capture.capture_region()` → `clipboard.copy_image()` → `saver.save_image()`
+    - T13 main.py 集成时按同样模式：读 `result` → 调业务模块
+    - **不**修改 src/overlay.py 实现业务串联
+    - **不**做错误处理包装（T15 范围）
+    - **不**做截图视觉断言（仅验流程跑通 + 文件生成；T14 联调时人工事后检查 PNG 确认无残影）
+23. **T11 verify 脚本不删除用户截图**：
+    - 不调用 `path.unlink()` 清理 A 子用例产物
+    - 用 `files_before` / `files_after` 差集精确判断"本次新增"
+    - 保留截图产物方便 T14 联调时人工事后目视检查
 
 ---
 
 ## 待确认事项
 
-- T06+ 按 §7 推荐顺序推进
+- T12+ 按 §7 推荐顺序推进
+- T14 全流程联调时**人工事后打开 PNG**确认截图中无遮罩/白边/光标残留；若发现残影，按 T10 决策"实测后"选择延迟方案（0ms / processEvents / 50ms）
 - T18 README 完善时补充"如何改快捷键"小节（编辑 `main.py` 的 `DEFAULT_HOTKEY`）
 
 ---
 
-当前项目版本架构 v1.1
+当前项目版本架构 v1.5
