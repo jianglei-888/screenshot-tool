@@ -1,15 +1,14 @@
 # Windows 截图工具 MVP 架构设计
 
-> 版本：v1.1
-> 日期：2026-06-21
-> 状态：T01-T05 已完成，T06-T18 待开发
+> 版本：v1.2
+> 日期：2026-06-23
+> 状态：T01-T06 已完成，T07-T18 待开发
 > 变更：
-> - T05 完成：clipboard.py 实现 + 验证脚本
-> - 验证脚本迁至 `scripts/`：`verify_capture.py`、`verify_clipboard.py`
-> - 任务编号统一：T01-T18 顺序对应 18 个 Task
-> - 模块描述与当前实现对齐（selection.py / capture.py / clipboard.py）
-> - 测试策略：pytest 单测（`tests/test_selection.py`）+ 手动验证脚本（`scripts/verify_*.py`）
-> - 后续约定：`tests/` 只放 pytest 单测，手动验证脚本统一放 `scripts/`，命名 `verify_*.py`
+> - T06 完成：saver.py 实现（自动保存到默认目录，无保存对话框）
+> - saver.py 职责调整：MVP 阶段去掉原生保存对话框（"Save As" 不在范围内）
+> - saver 验证脚本迁至 `scripts/verify_saver.py`（5 项断言）
+> - 阶段 2（核心能力）全部完成，阶段 3（UI 层）开始
+> - T11 依赖更新：T10, T05, T06（saver 集成进端到端流程）
 
 ---
 
@@ -63,13 +62,14 @@ screenshot-tool/
 │   ├── main.py                     ⏳      应用入口 + DEFAULT_HOTKEY 常量
 │   ├── hotkey.py                   ⏳      全局热键注册/注销
 │   ├── overlay.py                  ⏳      全屏遮罩窗口（PySide6）
-│   └── saver.py                    ⏳      文件保存 + DEFAULT_SAVE_DIR 常量
+│   └── saver.py                    ✅ T06  文件保存 + DEFAULT_SAVE_DIR 常量
 ├── tests/
 │   ├── __init__.py
 │   └── test_selection.py           ✅ T04  pytest 单测（10 个用例，0.22s）
 └── scripts/
     ├── verify_capture.py           ✅ T03  手动验证脚本（mss 截全屏+区域）
     ├── verify_clipboard.py         ✅ T05  手动验证脚本（剪贴板写入）
+    ├── verify_saver.py             ✅ T06  手动验证脚本（5 项断言）
     └── build.spec                  ⏳ T16  PyInstaller 配置
 ```
 
@@ -181,16 +181,29 @@ screenshot-tool/
 - **关系**：被 main 流程调用（在 overlay 确认后自动执行）
 - **验证**：`scripts/verify_clipboard.py` — 手动验证脚本，跑通后人工在 Paint 粘贴确认
 
-### 3.8 `saver.py` — 文件保存 + 常量定义 ⏳
+### 3.8 `saver.py` — 文件保存 + 常量定义 ✅ T06
 
-- **职责**：弹原生保存对话框（带默认文件名），保存为 PNG
-- **常量定义**：
-  - `DEFAULT_SAVE_DIR = "~/Pictures/Screenshots"`（模块顶部，要改直接改这里）
+- **职责**：自动保存 PIL.Image 到默认目录，无保存对话框
+- **常量定义**（模块顶部）：
+  - `DEFAULT_SAVE_DIR = Path.home() / "Pictures" / "Screenshots"`
   - `FILENAME_TEMPLATE = "screenshot_{timestamp}.png"`
-- **输入**：PIL.Image
-- **输出**：保存的文件路径，用户取消时返回 None
-- **关键行为**：时间戳格式 `YYYYMMDD_HHMMSS`；同名文件自动加序号
-- **关系**：被 main 调用（保存动作是用户触发，MVP 用快捷键 S 触发）
+- **接口**：
+  - `save_image(image, save_dir=None) -> Path | None`：保存为 PNG，成功返回绝对路径，失败/异常返回 `None`
+  - `generate_filename(save_dir=DEFAULT_SAVE_DIR, template=FILENAME_TEMPLATE) -> str`：生成时间戳文件名，自动处理同秒冲突
+  - `_next_available_path(path) -> Path`：内部辅助，已存在时追加 `_1`、`_2`...
+- **输入**：PIL.Image（不校验类型，依赖调用方）；可选 `save_dir`，None 则用 `DEFAULT_SAVE_DIR`
+- **输出**：成功返回 `Path`；失败/异常一律返回 `None`（不抛异常给调用方）
+- **关键行为**：
+  - 时间戳格式 `YYYYMMDD_HHMMSS`（本地时间）
+  - 同秒连续保存：`_1`、`_2`... 序号从 1 开始
+  - 目录不存在自动 `mkdir(parents=True, exist_ok=True)`
+  - 全部异常（mkdir 失败、image.save 失败）捕获并记 ERROR 日志
+- **不负责**：
+  - ❌ 弹原生保存对话框（"Save As" 不在 MVP 范围）
+  - ❌ 跨会话去重
+  - ❌ 输入类型校验（信任调用方传 PIL.Image）
+- **关系**：被 main 调用（自动保存触发，**不需要用户按键**；截图确认后立即落盘）
+- **验证**：`scripts/verify_saver.py` — 5 项断言（格式 / 同秒冲突 / 自动建目录 / 错误输入 / 往返打开）
 
 ### 模块关系图
 
@@ -223,7 +236,7 @@ main (DEFAULT_HOTKEY)
 | 9 | **截图时屏幕变化**（鼠标动、动画） | 抓到的图与选区瞬间不一致 | 接受现状（微信也这样）；可选：截图前 `time.sleep(0.05)` |
 | 10 | **PySide6 安装包大** | 打包后 exe 100MB+ | 接受；可后续研究裁剪未使用的 Qt 模块 |
 | 11 | **热键监听在某些游戏/全屏应用下失效** | 按下无响应 | Windows 已知行为；后续可考虑用低级钩子兜底 |
-| 12 | **保存对话框被遮罩挡住** | 用户看不到 | 遮罩关闭后再弹保存框（已经是这个流程） |
+| 12 | ~~**保存对话框被遮罩挡住**~~ | — | T06 决定 MVP 不弹保存对话框，此风险已消除 |
 | 13 | **写死常量改起来要改源码** | 改快捷键/保存路径需要改 .py 文件并重启 | 个人自用接受；将来要支持配置再加 config 模块 |
 
 ---
@@ -237,8 +250,9 @@ main (DEFAULT_HOTKEY)
 | T03 | capture.py（mss 全屏 + 区域截图） | ✅ 完成 | `scripts/verify_capture.py` 跑通，输出尺寸/耗时正确 |
 | T04 | selection.py（矩形规范化） | ✅ 完成 | 10 个 pytest 用例通过（0.22s） |
 | T05 | clipboard.py（PIL → QImage → 剪贴板） | ✅ 完成 | `scripts/verify_clipboard.py` 跑通，Paint 粘贴确认 |
+| T06 | saver.py（自动保存到默认目录） | ✅ 完成 | `scripts/verify_saver.py` 5 项断言通过；同秒冲突 `_1`/`_2` 序号正确 |
 
-**进度**：5 / 18 Task 完成（28%），处于**阶段 2（核心能力）**进行中。
+**进度**：6 / 18 Task 完成（33%），处于**阶段 2（核心能力）**进行中。
 
 ---
 
@@ -246,21 +260,20 @@ main (DEFAULT_HOTKEY)
 
 | ID | 任务 | 依赖 | 预计 | 验证方式 |
 |----|------|------|------|----------|
-| T06 | saver.py：文件名生成 + 默认目录 | T03 | 20min | 文件名格式正确；同秒多次保存自动加序号 |
 | T07 | overlay 框架：全屏无边框 + 半透明 | T04 | 30min | 运行后全屏黑罩出现，ESC 关闭 |
 | T08 | overlay 鼠标事件：按下/移动/抬起 + 选区矩形 | T07 | 30min | 拖拽有矩形跟随，右下角显示尺寸 |
 | T09 | overlay 确认/取消：Enter/ESC/右键 | T08 | 20min | 三种退出方式都能正常返回坐标或 None |
 | T10 | overlay 截图前隐藏自己 | T09 | 20min | 截出来的图里没有黑色遮罩 |
-| T11 | UI 集成测试：overlay → capture → clipboard 一条龙 | T10, T05 | 30min | 按 Enter 后图片已在剪贴板 |
+| T11 | UI 集成测试：overlay → capture → clipboard → saver 一条龙 | T10, T05, T06 | 30min | 按 Enter 后图片已在剪贴板 + 已落盘到默认目录 |
 | T12 | hotkey.py：注册全局热键 | T11 | 25min | 按下 `ctrl+shift+a` 触发回调 |
 | T13 | main.py：装配 + 启动事件循环 | T12, T11 | 30min | `python -m src.main` 启动后热键可用，退出干净 |
-| T14 | 全流程联调：热键 → 截图 → 剪贴板 → 保存 | T13, T06 | 30min | 实测一次完整流程，符合 PRD 6 步 |
+| T14 | 全流程联调：热键 → 截图 → 剪贴板 → 保存 | T13 | 30min | 实测一次完整流程，符合 PRD 6 步 |
 | T15 | 错误处理：热键/截图/剪贴板失败的日志与降级 | T14 | 25min | 故意触发错误，进程不崩，有日志 |
 | T16 | build.spec：PyInstaller 配置 | T14 | 25min | `pyinstaller scripts/build.spec` 成功生成 exe |
 | T17 | 打包验证：干净环境运行 exe | T16 | 20min | 双击 exe 可启动，热键可用 |
 | T18 | README 完善：使用说明、快捷键、打包方法 | T17 | 20min | 新人按 README 能跑通 |
 
-**剩余**：13 / 18 Task 待开发，预计总耗时 ~5.7 小时。
+**剩余**：12 / 18 Task 待开发，预计总耗时 ~5.4 小时。
 
 ---
 
@@ -272,10 +285,10 @@ main (DEFAULT_HOTKEY)
 T01 → T02
 **产出**：能写日志
 
-### 阶段 2：核心能力（3/4 完成）
-T03 ✅ → T04 ✅ → T05 ✅ → T06
+### 阶段 2：核心能力 ✅ 完成
+T03 ✅ → T04 ✅ → T05 ✅ → T06 ✅
 **产出**：脚本化跑通 capture → clipboard → saver（无 UI）
-**下一步**：T06（saver.py）
+**下一步**：T07（overlay 框架）
 
 ### 阶段 3：UI 层
 T07 → T08 → T09 → T10 → T11
@@ -299,8 +312,7 @@ T16 → T17 → T18
 | 里程碑 | 状态 | 验证内容 |
 |--------|------|----------|
 | 阶段 1 结束 | ✅ | 基础能力（日志可写） |
-| 阶段 2 进行中 | 🔄 | 核心能力部分验证（截屏 + 规范化 + 剪贴板） |
-| 阶段 2 结束 | ⏳ | 核心能力全验证（脚本化截图 + 复制 + 保存） |
+| 阶段 2 结束 | ✅ | 核心能力全验证（脚本化截图 + 复制 + 保存） |
 | 阶段 3 结束 | ⏳ | 用户体验可验证（手动按钮能完整流程） |
 | 阶段 4 结束 | ⏳ | MVP 完成（热键可用） |
 | 阶段 6 结束 | ⏳ | 可交付 |
