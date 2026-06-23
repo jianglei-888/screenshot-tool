@@ -26,6 +26,7 @@ class OverlayWindow(QWidget):
         self._start = None
         self._end = None
         self._is_dragging = False
+        self._result: tuple[int, int, int, int] | None = None
         self._setup_window()
 
     def _setup_window(self) -> None:
@@ -76,6 +77,10 @@ class OverlayWindow(QWidget):
             self._end = self._start
             self._is_dragging = True
             self.update()
+        elif event.button() == Qt.MouseButton.RightButton:
+            self._result = None
+            log.info("Overlay cancelled by right click")
+            self.close()
 
     def mouseMoveEvent(self, event) -> None:
         if self._is_dragging:
@@ -90,7 +95,15 @@ class OverlayWindow(QWidget):
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Escape:
-            log.info("Overlay closed by ESC")
+            self._result = None
+            log.info("Overlay cancelled by ESC")
+            self.close()
+        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            rect = self.get_selection_rect()
+            if rect is None or rect[2] <= 0 or rect[3] <= 0:
+                return
+            self._result = rect
+            log.info("Overlay confirmed: %s", rect)
             self.close()
         else:
             super().keyPressEvent(event)
@@ -108,3 +121,8 @@ class OverlayWindow(QWidget):
             (self._start.x(), self._start.y()),
             (self._end.x(), self._end.y()),
         )
+
+    @property
+    def result(self) -> tuple[int, int, int, int] | None:
+        """User final choice: (x,y,w,h) if confirmed, None if cancelled."""
+        return self._result
