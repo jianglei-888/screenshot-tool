@@ -2,6 +2,9 @@ name: "Deploy"
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+        - "v*"
 
 jobs:
   build:
@@ -13,3 +16,8 @@ jobs:
         run: |
           Compress-Archive -Path src, tests, docs, requirements.txt, README.md, CLAUDE.md -DestinationPath screenshot-tool.zip -Force
           dir screenshot-tool.zip
+      - name : Upload to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: screenshot-tool.zip
+          generate_release_notes: true
